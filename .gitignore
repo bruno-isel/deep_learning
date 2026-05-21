@@ -2,3 +2,5 @@ dl-venv/
 dl_venv/
 /__pycache__/
 .DS_Store
+GTSDB/images/
+CLAUDE.md
