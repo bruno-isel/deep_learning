@@ -1,5 +1,79 @@
 # Relatório Técnico — Traffic Sign Recognition (GTSDB)
 
+**Grupo:** A52323 | **Split:** 70/15/15 estratificado, seed=42 → 849 / 182 / 182
+
+---
+
+## Resultados e Log de Execução
+
+### T1 — CNN from Scratch (4 super-classes, patches 96×96)
+
+| Métrica | Valor |
+|---------|-------|
+| Accuracy (test) | **98.9%** (180/182 corretos) |
+| Macro F1 | **0.9871** |
+| AUC (todas as classes) | **1.000** |
+| Parâmetros | 4,814,020 |
+| Épocas | 33 (early stop patience=10) |
+
+**Erros (2 casos):**
+- Mandatory → Other: sinal de rotunda (setas circulares azuis) confundido com Other
+- Other → Prohibitory: sinal "fim de todas as restrições" (classe 32, bordas circulares vermelhas) confundido com Prohibitory
+
+---
+
+### T2 — MobileNetV2 (43 classes, patches 96×96)
+
+#### Run 1 — BROKEN ❌
+
+| Métrica | Valor |
+|---------|-------|
+| Accuracy (test) | **1.65%** (pior que random 1/43 ≈ 2.3%) |
+| Macro F1 | **0.0032** |
+| Classes aprendidas | 2 de 43 (classe 1: F1≈0.09, classe 20: F1≈0.02) |
+
+**Causa raiz:** `class_weight_dict` com pesos extremos (~19.7×) para classes raras (19 e 37).
+Com 2 amostras a pesar 19.7× cada, essas amostras dominam os gradientes de toda a época.
+Os gradientes das outras 847 amostras ficam suprimidos. Loss estagna em ~3.76 (entropy máxima para log(43)).
+
+**Fix:**
+```python
+max_weight = 5.0
+class_weight_capped = {k: min(v, max_weight) for k, v in class_weight_dict.items()}
+```
+Reconstruir o modelo + re-executar Phase 1 + Phase 2 com `class_weight_capped`.
+
+#### Run 2 — (a preencher após fix)
+
+| Métrica | Valor |
+|---------|-------|
+| Accuracy (test) | — |
+| Macro F1 | — |
+| 5 piores classes | — |
+
+---
+
+### Tabela Comparativa (estado atual)
+
+| Task | Accuracy | Macro F1 | Parâmetros |
+|------|----------|----------|------------|
+| T1: CNN scratch (4 classes) | **0.9890** | **0.9871** | 4,814,020 |
+| T2 run1 (43 classes) | 0.0165 ❌ | 0.0032 ❌ | 2,596,971 |
+| T2 run2 (43 classes) | — | — | 2,596,971 |
+| T3: Multi-label | — | — | — |
+| T4: YOLO detection | — | — | — |
+
+---
+
+### Problemas e Soluções
+
+| Problema | Causa | Fix |
+|----------|-------|-----|
+| `NotFoundError: dlopen libmetal_plugin.dylib` | tensorflow-metal 1.2.0 incompatível com TF 2.20.0 | `pip uninstall tensorflow-metal -y` + eliminar célula de instalação |
+| T2 accuracy < random | class_weight extremo (19.7×) suprime gradientes | Limitar pesos a `min(w, 5.0)` |
+
+---
+
 ## Índice
 
 1. [Visão geral do projeto](#1-visão-geral-do-projeto)
