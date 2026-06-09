@@ -47,19 +47,20 @@ Reconstruir o modelo + re-executar Phase 1 + Phase 2 com `class_weight_capped`.
 
 Resultados idênticos à run 1. O cap não foi suficiente — o problema não era só o class_weight.
 
-#### Run 3 — sem class_weight, backbone completo, lr=3e-6 ⚠️ (Accuracy: 6.59% | Macro F1: 0.003)
+#### Runs 3-4 ⚠️ (Accuracy: 6.59% | Macro F1: 0.003)
 
-Accuracy melhorou 4× mas macro F1 continua ~0. **Class collapse** — o modelo aprende a prever quase sempre a classe 38 (mais frequente), ignorando as outras 42.
+Class collapse — modelo prevê sempre a classe mais frequente. Causa ainda não identificada nestas runs.
 
-**Causa raiz — tamanho do dataset:**
+#### Run 5 — preprocessing corrigido ✅ (Accuracy: 36.26% | Macro F1: 0.196)
 
-| | T1 | T2 |
-|---|---|---|
-| Nº de classes | 4 | 43 |
-| Amostras treino | 849 | 849 |
-| Amostras/classe (média) | ~212 | ~20 |
+**Bug identificado:** pipeline divide imagens por 255 → [0,1]. Modelo aplicava `mobilenet_v2.preprocess_input` que espera [0,255] → todos os inputs comprimidos em [-1.0, -0.992]. Backbone recebia inputs virtualmente idênticos.
 
-Com ~20 amostras/classe o fine-tuning colapsa para prever sempre a classe dominante. Para classificação fine-grained de 43 classes seriam necessárias 200-500 amostras/classe, ou técnicas de few-shot learning.
+**Fix:** `x = inputs * 2.0 - 1.0` — mapeia [0,1] → [-1,1] corretamente.
+
+- Phase 1 (frozen): val_accuracy 2.2% → **36.8%**
+- Phase 2 (20 camadas, lr=1e-5): test accuracy **36.26%**, macro F1 **0.196**
+- Classes bem aprendidas (F1>0.5): 6, 12, 13, 14
+- Classes F1=0: raras com 1-4 amostras de treino
 
 ---
 
@@ -71,6 +72,9 @@ Com ~20 amostras/classe o fine-tuning colapsa para prever sempre a classe domina
 | T2 run1 (43 classes) | 0.0165 ❌ | 0.0032 ❌ | 2,596,971 |
 | T2 run2 (43 classes) | 0.0165 ❌ | 0.0032 ❌ | 2,596,971 |
 | T2 run3 (43 classes) | 0.0659 ⚠️ | 0.0034 ❌ | 2,596,971 |
+| T2 run4 — head simples + aug++ | 0.0659 ⚠️ | 0.0034 ❌ | 2,313,067 |
+| T2 run5 — MobileNetV2 preprocessing fix ✅ | **0.3626** | **0.1963** | 2,313,067 |
+| T2 run6 — EfficientNetB0 | ~0.17 ❌ | — | ~4,000,000 |
 | T3: Multi-label | — | — | — |
 | T4: YOLO detection | — | — | — |
 
@@ -82,7 +86,7 @@ Com ~20 amostras/classe o fine-tuning colapsa para prever sempre a classe domina
 |----------|-------|-----|
 | `NotFoundError: dlopen libmetal_plugin.dylib` | tensorflow-metal 1.2.0 incompatível com TF 2.20.0 | `pip uninstall tensorflow-metal -y` + eliminar célula de instalação |
 | T2 run1: accuracy < random | class_weight extremo (19.7×) suprime gradientes | Limitar pesos a `min(w, 5.0)` |
-| T2 runs 1-3: class collapse | ~20 amostras/classe insuficientes para fine-tuning standard | Limitação estrutural do dataset — documentada e explicada |
+| T2 runs 1-4: class collapse (6.59%) | **Bug de preprocessing**: `preprocess_input` esperava [0,255] mas recebia [0,1] → todos os inputs em [-1,-0.99] | `x = inputs * 2.0 - 1.0` — fix na run 5 → 36.26% |
 
 ---
 
