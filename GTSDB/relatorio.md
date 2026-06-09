@@ -43,23 +43,34 @@ class_weight_capped = {k: min(v, max_weight) for k, v in class_weight_dict.items
 ```
 Reconstruir o modelo + re-executar Phase 1 + Phase 2 com `class_weight_capped`.
 
-#### Run 2 — (a preencher após fix)
+#### Run 2 — com fix de class_weight ❌ (overfitting)
 
-| Métrica | Valor |
-|---------|-------|
-| Accuracy (test) | — |
-| Macro F1 | — |
-| 5 piores classes | — |
+**Phase 1 (frozen):** train ~6%, val 2.2% estagnada.  
+**Phase 2 (unfreeze 20 camadas):** train chegou a 14%, val 2.2% (brevemente 7.7%, colapsou para 1.1% no final).
+
+**Causa raiz — tamanho do dataset:**
+
+| | T1 | T2 |
+|---|---|---|
+| Nº de classes | 4 | 43 |
+| Amostras treino | 849 | 849 |
+| Amostras/classe (média) | ~212 | ~20 |
+
+Com ~20 amostras por classe, o fine-tuning standard não tem dados suficientes para adaptar o backbone. O modelo memoriza as amostras de treino (train loss desce) mas não aprende features generalizáveis (val_loss estagna). Algumas classes têm 1-4 amostras — qualquer modelo as ignora.
+
+Este é um problema de **few-shot learning**. Para bons resultados seriam necessárias técnicas específicas (prototypical networks, data augmentation muito agressiva) ou mais dados.
+
+**Conclusão:** O transfer learning não substituiu a necessidade de dados. T1 funciona (98.9%) porque tem ~212 amostras/super-classe; T2 falha porque tem ~20 amostras/classe.
 
 ---
 
-### Tabela Comparativa (estado atual)
+### Tabela Comparativa
 
 | Task | Accuracy | Macro F1 | Parâmetros |
 |------|----------|----------|------------|
 | T1: CNN scratch (4 classes) | **0.9890** | **0.9871** | 4,814,020 |
 | T2 run1 (43 classes) | 0.0165 ❌ | 0.0032 ❌ | 2,596,971 |
-| T2 run2 (43 classes) | — | — | 2,596,971 |
+| T2 run2 (43 classes) | 0.0165 ❌ | 0.0032 ❌ | 2,596,971 |
 | T3: Multi-label | — | — | — |
 | T4: YOLO detection | — | — | — |
 
@@ -70,7 +81,8 @@ Reconstruir o modelo + re-executar Phase 1 + Phase 2 com `class_weight_capped`.
 | Problema | Causa | Fix |
 |----------|-------|-----|
 | `NotFoundError: dlopen libmetal_plugin.dylib` | tensorflow-metal 1.2.0 incompatível com TF 2.20.0 | `pip uninstall tensorflow-metal -y` + eliminar célula de instalação |
-| T2 accuracy < random | class_weight extremo (19.7×) suprime gradientes | Limitar pesos a `min(w, 5.0)` |
+| T2 run1: accuracy < random | class_weight extremo (19.7×) suprime gradientes | Limitar pesos a `min(w, 5.0)` |
+| T2 run2: overfitting severo | ~20 amostras/classe insuficientes para fine-tuning standard | Limitação do dataset — documentar como finding, não como bug |
 
 ---
 
