@@ -75,7 +75,8 @@ Class collapse — modelo prevê sempre a classe mais frequente. Causa ainda nã
 | T2 run4 — head simples + aug++ | 0.0659 ⚠️ | 0.0034 ❌ | 2,313,067 |
 | T2 run5 — MobileNetV2 preprocessing fix ✅ | **0.3626** | **0.1963** | 2,313,067 |
 | T2 run6 — EfficientNetB0 | ~0.17 ❌ | — | ~4,000,000 |
-| T3: Multi-label | — | — | — |
+| T3 run1: Multi-label BCE simples | — ❌ | 0.000 (3/4 classes) ❌ | 2,596,923 |
+| T3 run2: Multi-label weighted BCE ✅ | bin_acc 0.73 | Macro F1 **0.467** (thr=0.3) | 2,596,923 |
 | T4: YOLO detection | — | — | — |
 
 ---
@@ -87,6 +88,7 @@ Class collapse — modelo prevê sempre a classe mais frequente. Causa ainda nã
 | `NotFoundError: dlopen libmetal_plugin.dylib` | tensorflow-metal 1.2.0 incompatível com TF 2.20.0 | `pip uninstall tensorflow-metal -y` + eliminar célula de instalação |
 | T2 run1: accuracy < random | class_weight extremo (19.7×) suprime gradientes | Limitar pesos a `min(w, 5.0)` |
 | T2 runs 1-4: class collapse (6.59%) | **Bug de preprocessing**: `preprocess_input` esperava [0,255] mas recebia [0,1] → todos os inputs em [-1,-0.99] | `x = inputs * 2.0 - 1.0` — fix na run 5 → 36.26% |
+| T3 run1: F1=0 em 3 classes (threshold=0.5) | **Class imbalance multi-label**: prever 0 em tudo já acerta ~76% da binary_accuracy. Modelo aprende esse atalho — outputs abaixo de 0.5 para quase tudo | Weighted BCE: `pos_weight[c] = n_neg[c] / n_pos[c]` → penalizar mais falsos negativos |
 
 ---
 
@@ -324,11 +326,56 @@ RandomContrast(0.1)        # variação de contraste
 # SEM RandomZoom — poderia cortar sinais nas bordas
 ```
 
-### 5.3 Análise de thresholds (0.3, 0.5, 0.7)
+### 5.3 Resultados e diagnóstico
+
+#### Run 1 — binary_crossentropy simples ❌
+
+| Threshold | Prohibitory F1 | Danger F1 | Mandatory F1 | Other F1 | Macro F1 |
+|-----------|---------------|-----------|--------------|----------|----------|
+| 0.3       | 0.573         | 0.305     | 0.194        | 0.192    | 0.316    |
+| **0.5**   | **0.261**     | **0.000** | **0.000**    | **0.000**| **0.065**|
+| 0.7       | 0.000         | 0.000     | 0.000        | 0.000    | 0.000    |
+
+val_binary_accuracy = 76% — **métrica enganosa**: prever zeros em tudo acertaria ~76% dos labels.
+
+**Causa raiz — class imbalance em multi-label:**
+Em 630 imagens de treino, a maioria das classes binárias é 0 (negativo):
+- Prohibitory: 248 positivos / 382 negativos
+- Danger: 118 positivos / 512 negativos
+- Mandatory: 92 positivos / 538 negativos
+- Other: 137 positivos / 493 negativos
+
+Com binary_crossentropy simples, o modelo aprende que prever 0 baixa a loss com pouca penalização — outputs ficam concentrados em [0.1, 0.4] e nunca passam o threshold 0.5. Ao threshold 0.3, Prohibitory já funciona (é a classe mais frequente) mas as restantes continuam fracas.
+
+#### Fix — Weighted Binary Cross-Entropy ✅
+
+```python
+pos_weight[c] = n_negativos[c] / n_positivos[c]
+loss = -(pos_weight * y_true * log(ŷ) + (1 - y_true) * log(1 - ŷ))
+```
+
+Pesos calculados: Prohibitory ≈1.35×, Other ≈2.02×, Danger ≈2.60×, Mandatory ≈3.46×. O modelo fica muito mais penalizado por falhar um sinal presente, forçando os outputs positivos a subir acima do threshold.
+
+#### Run 2 — weighted BCE ✅
+
+| Threshold | Prohibitory F1 | Danger F1 | Mandatory F1 | Other F1 | Macro F1 | Micro F1 |
+|-----------|---------------|-----------|--------------|----------|----------|----------|
+| 0.3       | 0.579         | 0.368     | 0.416        | 0.504    | **0.467**| **0.483**|
+| 0.5       | 0.597         | 0.000     | 0.350        | 0.167    | 0.278    | 0.411    |
+
+**AUC por classe:** Mandatory 0.832 | Prohibitory 0.677 | Other 0.669 | Danger 0.603
+
+**Threshold ótimo: 0.3** — ao threshold 0.5 o modelo é demasiado conservador (outputs concentrados em [0.3, 0.45]).
+
+**Padrões de erro observados:**
+- *False Positives*: modelo prevê Prohibitory em cenas vazias (estruturas verticais confundidas) e confunde sinais "ceder passagem" (Other) com Prohibitory (ambos circulares)
+- *False Negatives*: sinais pequenos em cenas urbanas densas e sinais em cenas de baixo contraste ficam abaixo do threshold
+
+### 5.4 Análise de thresholds (0.3, 0.5, 0.7)
 
 **Porquê testar 3 thresholds:** O threshold 0.5 é o padrão, mas nem sempre é o ótimo. Threshold baixo → mais Recall (deteta mais, incluindo com baixa confiança) mas menos Precision. Threshold alto → o contrário. Para segurança rodoviária, Recall alto costuma ser prioritário.
 
-### 5.4 Resolução 224×224 (não a original 1360×800)
+### 5.5 Resolução 224×224 (não a original 1360×800)
 
 **Porquê:** O MobileNetV2 foi desenhado para 224×224 — os seus pesos ImageNet são ótimos para esta resolução. Usar 1360×800 exigiria batches de 1-2 imagens (instabilidade de treino) e muito mais memória GPU. Como T3 só classifica quais super-classes estão presentes (não onde), a perda de detalhe é aceitável.
 
